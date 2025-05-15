@@ -5,7 +5,9 @@ import time
 import os
 from datetime import datetime
 import csv
-
+import asyncio
+import websockets
+import json
 
 
 
@@ -32,6 +34,41 @@ def get_orderbook(market_symbol: str):
     except KeyError:
         print("Unexpected response structure. Please check the market symbol or API changes.")
 
+async def ws_get_orderbook():
+    # Connect to the WebSocket server
+    async with websockets.connect(f"wss://ws.api.prod.paradex.trade/v1") as websocket:
+        
+        # Send the subscription request
+        request_message = {
+            "jsonrpc": "2.0",
+            "method": "subscribe",
+            "params": {
+                "channel": "markets_summary"
+            },
+            "id": 1
+        }
+        await websocket.send(json.dumps(request_message))
+        
+        # Continuously listen for incoming messages
+        while True:
+            # Receive a message from the WebSocket server
+            message = await websocket.recv()
+            message = json.loads(message, parse_float=decimal.Decimal)
+            data = message.get('params', {}).get('data', None)
+            
+            if data == None:
+                continue
+            
+            symbol = data.get('symbol')
+            if symbol.endswith('-P') == False and symbol.endswith('-C') == False:
+                continue
+            
+            # Print the received message
+            result = data.copy()  
+            greeks = result.pop('greeks')  
+            result.update(greeks)
+            persist_result(symbol, result)
+
 def persist_result(market_symbol, result):
     os.makedirs(RESULTS_DIR, exist_ok=True)
     current_date = datetime.utcnow().strftime('%Y-%m-%d')
@@ -45,9 +82,5 @@ def persist_result(market_symbol, result):
 
 if __name__ == "__main__":
     while True:
-        for market_symbol in ["SOL-USD-170-C", "SOL-USD-170-P", "SOL-USD-175-C", "SOL-USD-175-P", "SOL-USD-180-C", "SOL-USD-180-P"]:
-            result = get_orderbook(market_symbol)
-            persist_result(market_symbol, result)
-        
-        time.sleep(60)
+        asyncio.get_event_loop().run_until_complete(ws_get_orderbook())
 
